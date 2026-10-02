@@ -73,7 +73,8 @@ async function generate(id: number, params: GenerateParams): Promise<void> {
   running.set(id, abort);
   try {
     for await (const chunk of tts.synthesizeStream(
-      segments, voiceEmb, options, seed, abort.signal,
+      segments, voiceEmb, options, seed, abort.signal, undefined, undefined,
+      (index) => post({ type: 'segment', id, index }),
     )) {
       // Transferred: the codec allocates a fresh array per chunk and never looks
       // at it again, so handing the buffer over beats copying megabytes.

@@ -23,17 +23,19 @@ import { loadSampleTexts } from './samples';
 import { StreamPlayer, toWavBlob } from './player';
 import { LocalVoice, readVoiceZip } from './voicePack';
 import { deleteVoice, loadVoices, saveVoice } from './voiceStore';
-import { TtsWorker } from './workerClient';
+import { GenerateEvent, TtsWorker } from './workerClient';
 import { VoiceIndex } from './types';
 
 /** Same first-load text as the Gradio UI. */
-const DEFAULT_TEXT = 'Xin chào tất cả mọi người. Giọng nói này được tạo ra bởi ZeroTTS.';
+const DEFAULT_TEXT = 'Xin chào tất cả mọi người. Giọng nói này được tạo ra bởi Hưng Jr.';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const els = {
   banner: $<HTMLImageElement>('banner'),
   load: $<HTMLButtonElement>('load'),
+  loadLabel: $<HTMLSpanElement>('load-label'),
+  tagline: $<HTMLParagraphElement>('tagline'),
   generate: $<HTMLButtonElement>('generate'),
   stop: $<HTMLButtonElement>('stop'),
   download: $<HTMLAnchorElement>('download'),
@@ -50,6 +52,10 @@ const els = {
   chunkSec: $<HTMLInputElement>('chunk-sec'),
   textNorm: $<HTMLInputElement>('text-norm'),
   status: $<HTMLDivElement>('status'),
+  genProgress: $<HTMLDivElement>('gen-progress'),
+  genLabel: $<HTMLSpanElement>('gen-label'),
+  genPct: $<HTMLElement>('gen-pct'),
+  genBar: $<HTMLDivElement>('gen-bar'),
   bar: $<HTMLDivElement>('bar'),
   barWrap: $<HTMLDivElement>('bar-wrap'),
   sizeNote: $<HTMLParagraphElement>('size-note'),
@@ -106,6 +112,56 @@ function progress(fraction: number | null): void {
   if (fraction !== null) els.bar.style.width = `${Math.round(fraction * 100)}%`;
 }
 
+/** Measured speaking rate of the model's output, in characters of normalized
+ *  text per second of audio (~19–21 across voices). Deliberately a little
+ *  slow: an estimate that runs ahead stalls at the cap, one that runs behind
+ *  only makes the last step to 100% a bit bigger. Not chunking.ts's 15, which
+ *  is a conservative budget for sizing segments, not a prediction. */
+const SPOKEN_CHARS_PER_SEC = 19;
+
+/** The percentage under the Generate button. `null` hides it. */
+function genProgress(fraction: number | null, label = 'Đang tạo…'): void {
+  els.genProgress.hidden = fraction === null;
+  if (fraction === null) return;
+  const pct = Math.floor(fraction * 100);
+  els.genLabel.textContent = label;
+  els.genPct.textContent = `${pct}%`;
+  els.genBar.style.width = `${pct}%`;
+  els.genBar.parentElement?.setAttribute('aria-valuenow', String(pct));
+}
+
+/**
+ * Turns the worker's segment/chunk events into a fraction of the take done.
+ *
+ * The audio's length is not known until it is generated, so each segment's
+ * share is estimated from its text length at SPOKEN_CHARS_PER_SEC: finished segments count in full, the current one by
+ * how much of its expected audio has come back. That estimate is capped below
+ * the segment's full share so the figure never claims a segment is done before
+ * it is, and never moves backwards. 100% is only shown when the take is
+ * actually finished.
+ */
+function takeProgress(segments: string[], rate: number) {
+  const weights = segments.map((s) => Math.max(1, s.length));
+  const total = weights.reduce((a, b) => a + b, 0);
+  let before = 0;       // weight of finished segments
+  let segment = 0;
+  let samples = 0;      // audio decoded for the current segment
+  let shown = 0;
+  return (event: GenerateEvent): number => {
+    if (event.type === 'segment') {
+      for (let i = segment; i < event.index; i++) before += weights[i];
+      segment = event.index;
+      samples = 0;
+    } else {
+      samples += event.samples;
+    }
+    const expected = (weights[segment] / SPOKEN_CHARS_PER_SEC) * rate;
+    const within = Math.min(samples / expected, 0.95) * weights[segment];
+    shown = Math.max(shown, Math.min((before + within) / total, 0.99));
+    return shown;
+  };
+}
+
 function live(on: boolean): void {
   els.livePill.classList.toggle('on', on);
 }
@@ -145,23 +201,25 @@ updateBackendUi();
  *  selection lands after the current one and reports the wrong size. */
 let sizeRequest = 0;
 
-async function refreshSizeNote(): Promise<void> {
+async function refreshSizeNote(): Promise<boolean> {
   const mine = ++sizeRequest;
   const kind = backend() === 'ggml'
     ? `GGUF ${(gguf() ?? '').replace(/^gguf\/zerotts-|\.gguf$/g, '')}`
     : 'ONNX fp32';
   try {
     const info = await tts.downloadInfo(repo(), backend(), gguf());
-    if (mine !== sizeRequest) return;
+    if (mine !== sizeRequest) return false;
     els.sizeNote.textContent = info.cached
       ? `Mô hình đã có sẵn trên máy (${mb(info.bytes)}) — tải sẽ rất nhanh.`
       : `Lần đầu sẽ tải khoảng ${mb(info.bytes)} (${kind}) và ` +
         `lưu lại cho những lần sau. Nên dùng máy tính với mạng nhanh.`;
+    return info.cached;
   } catch {
-    if (mine !== sizeRequest) return;
+    if (mine !== sizeRequest) return false;
     els.sizeNote.textContent = backend() === 'ggml'
       ? 'Lần đầu sẽ tải khoảng 820 MB (GGUF f32) và lưu lại cho những lần sau.'
       : 'Lần đầu sẽ tải khoảng 900 MB (ONNX fp32) và lưu lại cho những lần sau.';
+    return false;
   }
 }
 
@@ -200,7 +258,8 @@ els.load.addEventListener('click', async () => {
     status(`Ready — ${voices.voices.length} voice(s), ${sampleRate / 1000} kHz.`);
     els.voice.disabled = false;
     els.generate.disabled = false;
-    els.load.textContent = '✓  Đã tải mô hình';
+    els.load.textContent = isDesktop ? '✓  Đã cài mô hình' : '✓  Đã tải mô hình';
+    rememberModel();
   } catch (error) {
     progress(null);
     els.sizeNote.textContent = `Tải mô hình thất bại: ${(error as Error).message}`;
@@ -253,12 +312,21 @@ els.generate.addEventListener('click', async () => {
 
     // The worker loads the voice and runs the model; this thread stays free to
     // paint, so the buttons and the log update while generation is under way.
+    const track = takeProgress(segments, sampleRate);
+    let segment = 1;
+    genProgress(0);
     const run = tts.generate({
       segments, voiceName, voiceEmb: local?.emb,
       options: {
         cfgScale: Number(els.cfg.value), audioTemperature: Number(els.temperature.value),
       },
       seed,
+    }, (event) => {
+      if (stopped) return;
+      if (event.type === 'segment') segment = event.index + 1;
+      genProgress(track(event), segments.length > 1
+        ? `Đang tạo… đoạn ${segment}/${segments.length}`
+        : 'Đang tạo…');
     });
     cancelRun = run.cancel;
 
@@ -275,6 +343,7 @@ els.generate.addEventListener('click', async () => {
     // Stop already reset the player and said so; a partial take is not worth
     // overwriting that with statistics.
     if (stopped) return;
+    genProgress(1, 'Hoàn thành');
 
     const total = chunks.reduce((n, c) => n + c.length, 0);
     const audio = new Float32Array(total);
@@ -301,7 +370,10 @@ els.generate.addEventListener('click', async () => {
     showTake(url, false);
     addTake({ url, text, title: takeTitle(selected, duration) });
   } catch (error) {
-    if (!stopped) status(`Generation failed: ${(error as Error).message}`);
+    if (!stopped) {
+      status(`Generation failed: ${(error as Error).message}`);
+      genProgress(null);
+    }
   } finally {
     live(false);
     els.generate.disabled = false;
@@ -316,6 +388,9 @@ els.stop.addEventListener('click', async () => {
   await player?.stop();
   live(false);
   status('Stopped.');
+  if (!els.genProgress.hidden) {
+    genProgress(Number.parseInt(els.genPct.textContent ?? '0', 10) / 100, 'Đã dừng');
+  }
 });
 
 els.clear.addEventListener('click', async () => {
@@ -732,7 +807,40 @@ els.backend.addEventListener('change', () => {
 
 els.banner.src = bannerUrl;
 els.text.value = DEFAULT_TEXT;
-refreshSizeNote();
+
+// Inside the desktop app (../desktop/) the download is an install step: the
+// button says so, and once the model is on disk it loads itself at startup so
+// reopening the app goes straight to the text box.
+const isDesktop = /\bElectron\//.test(navigator.userAgent);
+const MODEL_KEY = 'zerotts:desktop-model';
+
+/** The backend and GGUF build last installed, so the startup auto-load looks
+ *  for the model the user actually picked rather than the default one. */
+function rememberModel(): void {
+  if (!isDesktop) return;
+  try {
+    localStorage.setItem(MODEL_KEY, JSON.stringify({
+      backend: backend(), quant: els.quant.value, repo: els.repo.value,
+    }));
+  } catch { /* no storage: the next launch starts from the defaults */ }
+}
+
+if (isDesktop) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MODEL_KEY) ?? 'null');
+    if (saved) {
+      els.backend.value = saved.backend;
+      els.quant.value = saved.quant;
+      els.repo.value = saved.repo;
+      updateBackendUi();
+    }
+  } catch { /* defaults */ }
+  els.loadLabel.textContent = 'Cài mô hình';
+  els.tagline.textContent = 'Chạy hoàn toàn trên máy của bạn — không có gì được tải lên máy chủ.';
+}
+refreshSizeNote().then((cached) => {
+  if (isDesktop && cached && !els.load.disabled) els.load.click();
+});
 
 // Voices installed on an earlier visit. Restored before the model loads, so
 // they are in the picker and playable from the first moment the page is up.

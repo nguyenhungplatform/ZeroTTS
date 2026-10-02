@@ -1,0 +1,81 @@
+name: Desktop app
+
+# Builds the ZeroTTS installers (macOS .dmg, Windows .exe) from desktop/.
+# Run it by hand from the Actions tab, or push a tag like desktop-v0.1.0 to
+# also attach the installers to a GitHub release.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["desktop-v*"]
+
+jobs:
+  wasm:
+    # The ggml runtime the app defaults to is an Emscripten build, gitignored
+    # in js/public/ggml/. It is platform-independent, so build it once.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: mymindstorm/setup-emsdk@v14
+      - run: bash cpp/build-wasm.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ggml-wasm
+          path: |
+            js/public/ggml/zerotts-wasm.js
+            js/public/ggml/zerotts-wasm.wasm
+
+  build:
+    needs: wasm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac
+          - os: windows-latest
+            target: --win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ggml-wasm
+          path: js/public/ggml
+      - run: npm install
+        working-directory: desktop
+      - run: npm run web
+        working-directory: desktop
+      - run: npx electron-builder ${{ matrix.target }} --publish never
+        working-directory: desktop
+        env:
+          # Unsigned build. Add CSC_LINK / CSC_KEY_PASSWORD (and APPLE_ID etc.
+          # for notarization) as secrets to sign instead.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.os }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.dmg
+            *.exe

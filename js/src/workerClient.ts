@@ -19,7 +19,14 @@ interface Pending {
   reject: (error: Error) => void;
   onProgress?: (p: DownloadProgress) => void;
   onChunk?: (chunk: Float32Array) => void;
+  onSegment?: (index: number) => void;
 }
+
+/** What a `generate` reports as it goes, in the order the worker sent it:
+ *  a segment starting, or `samples` more audio decoded. */
+export type GenerateEvent =
+  | { type: 'segment'; index: number }
+  | { type: 'chunk'; samples: number };
 
 export class TtsWorker {
   private worker = new Worker(new URL('./worker.ts', import.meta.url), {
@@ -38,6 +45,7 @@ export class TtsWorker {
       switch (message.type) {
         case 'progress': entry.onProgress?.(message.progress); break;
         case 'chunk': entry.onChunk?.(message.chunk); break;
+        case 'segment': entry.onSegment?.(message.index); break;
         case 'result':
           this.pending.delete(message.id);
           entry.resolve(message.value);
@@ -88,8 +96,13 @@ export class TtsWorker {
   /**
    * Stream a take. Chunks arrive as they are decoded; `cancel()` on the returned
    * handle stops the worker's loop at the next frame boundary.
+   *
+   * `onEvent` fires as messages arrive rather than as `chunks` is consumed, so
+   * a progress display does not wait on playback.
    */
-  generate(params: GenerateParams): { chunks: AsyncIterable<Float32Array>; cancel: () => void } {
+  generate(
+    params: GenerateParams, onEvent?: (event: GenerateEvent) => void,
+  ): { chunks: AsyncIterable<Float32Array>; cancel: () => void } {
     const id = this.nextId++;
 
     // A queue rather than a callback: the consumer (`for await`) may be slower
@@ -105,7 +118,14 @@ export class TtsWorker {
 
     this.request(
       { type: 'generate', id, params },
-      { onChunk: (chunk) => { queue.push(chunk); wake(); } },
+      {
+        onChunk: (chunk) => {
+          onEvent?.({ type: 'chunk', samples: chunk.length });
+          queue.push(chunk);
+          wake();
+        },
+        onSegment: (index) => onEvent?.({ type: 'segment', index }),
+      },
     ).then(
       () => { state.finished = true; wake(); },
       (error: Error) => { state.failure = error; state.finished = true; wake(); },

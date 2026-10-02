@@ -7,6 +7,8 @@
  */
 
 import * as ort from 'onnxruntime-web';
+import ortWasmMjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs?url';
+import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url';
 
 import { fetchWithCache, ProgressFn, totalBytes } from './cache';
 import { CodecMeta, MossCodecDecoder } from './codec';
@@ -62,6 +64,13 @@ export async function loadModel(options: LoadOptions = {}): Promise<LoadedModel>
   ort.env.wasm.numThreads =
     options.threads ?? (isolated ? Math.min(4, navigator.hardwareConcurrency || 4) : 1);
   ort.env.wasm.simd = true;
+  // Load ORT's Emscripten glue as its own file. Left to the default, a
+  // production build inlines it into worker.ts's bundle, and ORT spawns its
+  // pthreads from that same URL — so every thread also runs worker.ts, whose
+  // `self.onmessage` replaces the pthread's handler, and the first session
+  // create hangs forever with no error. The dev server never shows it because
+  // onnxruntime-web is excluded from pre-bundling there.
+  ort.env.wasm.wasmPaths = { mjs: ortWasmMjsUrl, wasm: ortWasmUrl };
 
   // WASM only. WebGPU's kernels are not bit-identical to the CPU path, and this
   // model samples INSIDE the graph — small numeric differences change which

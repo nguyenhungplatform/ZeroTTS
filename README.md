@@ -95,6 +95,13 @@ Note the download: the weights are **fp32 and not quantized**, so the demo fetch
 ~900 MB once and persists it (OPFS/Cache API). That is a deliberate
 quality-over-size choice; it targets desktop broadband, not mobile data.
 
+## Desktop app
+
+[`desktop/`](https://github.com/zeroweight-ai/ZeroTTS/blob/main/desktop) packages the browser demo as an installable app for
+macOS (`.dmg`) and Windows (`.exe`). Open it, press **Cài mô hình**, and the
+model downloads once. After that the app works offline. See
+[desktop/README.md](https://github.com/zeroweight-ai/ZeroTTS/blob/main/desktop/README.md).
+
 ### Python
 
 ```python

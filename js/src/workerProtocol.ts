@@ -56,4 +56,6 @@ export type WorkerResponse =
   | { type: 'result'; id: number; value: unknown }
   | { type: 'error'; id: number; message: string }
   | { type: 'progress'; id: number; progress: DownloadProgress }
-  | { type: 'chunk'; id: number; chunk: Float32Array };
+  | { type: 'chunk'; id: number; chunk: Float32Array }
+  /** A `generate` has started on segment `index` of its `segments`. */
+  | { type: 'segment'; id: number; index: number };

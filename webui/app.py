@@ -50,7 +50,7 @@ import engine  # noqa: E402
 
 BANNER_PATH = os.path.join(_ROOT, "docs", "assets", "banner.png")
 
-DEFAULT_TEXT = "Xin chào tất cả mọi người. Giọng nói này được tạo ra bởi ZeroTTS."
+DEFAULT_TEXT = "Xin chào tất cả mọi người. Giọng nói này được tạo ra bởi Hưng Jr."
 
 # The panel is the only place this is explained, so it carries the whole
 # recipe: where a pack comes from, what the folder has to look like, and the

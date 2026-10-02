@@ -395,12 +395,16 @@ export class ZeroTTSBrowser {
    * The chunk-size ramp (1, 2, 4 … frames per decode call) only buys
    * time-to-first-audio, which only matters once, so it applies to the first
    * segment only; later segments decode straight at `maxChunkFrames`.
+   *
+   * `onSegment` is called with each segment's index before its first frame,
+   * so a caller can report progress through a multi-segment take.
    */
   async *synthesizeStream(
     segments: string | string[], voiceEmb: Float32Array | null,
     options: Partial<SamplingOptions> = {},
     seed?: number, signal?: AbortSignal,
     firstChunkFrames = 1, maxChunkFrames = 16,
+    onSegment?: (index: number) => void,
   ): AsyncGenerator<Float32Array> {
     const texts = Array.isArray(segments) ? segments : [segments];
     const stream: MossStreamingDecoder = this.codec.streamingDecoder();
@@ -420,6 +424,7 @@ export class ZeroTTSBrowser {
     for (let segIdx = 0; segIdx < texts.length; segIdx++) {
       if (signal?.aborted) return;
       let target = segIdx === 0 ? Math.max(1, firstChunkFrames) : cap;
+      onSegment?.(segIdx);
 
       for await (const frame of this.generateFrames(
         texts[segIdx], voiceEmb, options, seed, signal, rng,

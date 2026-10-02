@@ -116,6 +116,23 @@
       background: linear-gradient(90deg, var(--brand-2), var(--brand)); transition: width .15s;
     }
 
+    /* generation progress */
+    #gen-progress { margin-top: .7rem; }
+    #gen-progress[hidden] { display: none; }
+    .gen-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-size: .84rem; color: var(--muted); margin-bottom: .3rem;
+    }
+    #gen-pct { color: var(--fg); font-variant-numeric: tabular-nums; font-size: .95rem; }
+    .gen-track {
+      height: 8px; background: var(--sunk); border: 1px solid var(--line);
+      border-radius: 999px; overflow: hidden;
+    }
+    #gen-bar {
+      height: 100%; width: 0; border-radius: 999px;
+      background: linear-gradient(90deg, var(--brand-2), var(--brand)); transition: width .2s;
+    }
+
     /* players */
     audio { width: 100%; border-radius: 999px; }
     .player-label { font-size: .82rem; color: var(--muted); margin: .1rem 0 .35rem; }
@@ -249,7 +266,7 @@
     ZeroTTS - Chuyển văn bản tiếng Việt thành giọng nói tự nhiên, nhanh và
     realtime trên CPU
   </h1>
-  <p class="tagline">
+  <p class="tagline" id="tagline">
     Chạy hoàn toàn trong trình duyệt của bạn — không có gì được tải lên máy chủ.
   </p>
 
@@ -262,7 +279,7 @@
           <button id="load" class="primary" style="flex: 1 1 auto;">
             <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 4v11m0 0 4.5-4.5M12 15l-4.5-4.5M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" />
-            </svg>Tải mô hình
+            </svg><span id="load-label">Tải mô hình</span>
           </button>
         </div>
         <div id="bar-wrap"><div id="bar"></div></div>
@@ -275,6 +292,16 @@
         <div class="actions" style="margin-top: .6rem;">
           <button id="generate" class="primary" disabled>🎙️  Tạo giọng nói</button>
           <button id="stop" disabled>Dừng</button>
+        </div>
+        <div id="gen-progress" hidden>
+          <div class="gen-row">
+            <span id="gen-label">Đang tạo…</span>
+            <strong id="gen-pct">0%</strong>
+          </div>
+          <div class="gen-track" role="progressbar" aria-label="Tiến độ tạo giọng nói"
+               aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="gen-bar"></div>
+          </div>
         </div>
 
         <details class="advanced inline">
